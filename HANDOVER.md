@@ -47,7 +47,7 @@ Nothing is committed; the folder is not a git repository.
 
 - Module walk-through given in conversation.
 - Pushed to a private GitHub repository (see "Where things are").
-- NIDS fix (in `Downloads\Compressed\nids`, not committed there): `main.py`
+- NIDS fix (nids repo, branch `flush-repeat-counts`, not merged into main yet): `main.py`
   now writes deferred repeat counts every second from a background thread
   (`REPEAT_FLUSH_SEC`, env `NIDS_REPEAT_FLUSH_SEC`). Before, the end of a repeat
   burst stayed in memory until someone opened History. New test in
