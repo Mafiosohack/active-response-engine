@@ -1,0 +1,58 @@
+[Unit]
+Description=Active Response Engine (graduated firewall responses to NIDS alerts)
+Documentation=file:///opt/are/README.md
+# Start after the distribution's firewall service: its ruleset usually begins
+# with "flush ruleset", which would wipe this engine's table if it ran later.
+After=network.target nftables.service
+# Restarting nftables.service wipes the table, so restart the engine with it.
+# On start the engine reloads its table and re-applies every action still in force.
+PartOf=nftables.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/are
+EnvironmentFile=/etc/are/are.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/are/venv/bin/are --config /opt/are/config.yaml run
+
+# SIGINT lets both the engine loop and the API server shut down cleanly.
+KillSignal=SIGINT
+TimeoutStopSec=15
+Restart=on-failure
+RestartSec=5
+# Exit status 2 is a config, pinned-data or driver setup error: restarting cannot fix it.
+RestartPreventExitStatus=2
+
+# ---- privileges ----
+# Runs as root, but with every root power removed except the two it needs:
+#   CAP_NET_ADMIN        change the nftables table "inet are"
+#   CAP_DAC_READ_SEARCH  read the NIDS database wherever it lives, whoever owns it
+User=root
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_DAC_READ_SEARCH
+NoNewPrivileges=yes
+
+# ---- filesystem ----
+# Everything is read-only except /var/lib/are (ips.db).
+ProtectSystem=strict
+StateDirectory=are
+StateDirectoryMode=0700
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+
+# ---- everything else ----
+# AF_NETLINK is how nft talks to the kernel; AF_INET is the local API on 127.0.0.1.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

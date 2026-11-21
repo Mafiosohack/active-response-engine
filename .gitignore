@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+venv/
+.venv/
+
+# secrets and runtime state
+.env
+ips.db
+ips.db-wal
+ips.db-shm
+replay_out/
+
+# pinned MITRE data: large, re-created by `are fetch-data` and verified by sha256
+data/*.json
+data/*.part

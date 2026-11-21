@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "active-response-engine"
+version = "1.0.0"
+description = "Turns IDS alerts into graduated, explainable firewall responses"
+requires-python = ">=3.10"
+dependencies = ["fastapi>=0.110", "uvicorn>=0.27", "pydantic>=2.5", "PyYAML>=6.0", "python-dotenv>=1.0"]
+
+[project.scripts]
+are = "are.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["are*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

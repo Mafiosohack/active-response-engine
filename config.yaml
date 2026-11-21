@@ -1,0 +1,229 @@
+# Active Response Engine configuration.
+# Every number here is a starting value. Tune with `are replay` before enforcing.
+# Unknown keys are rejected at startup, so a typo cannot silently fall back to a default.
+
+engine:
+  db_path: ips.db                 # the engine's own decision log (created on first run)
+  poll_interval_seconds: 2
+  tick_seconds: 30
+  driver: dry_run                 # dry_run | nftables. Leave on dry_run until replay looks right.
+  # Evidence, triage events and expired decisions older than this are deleted from
+  # ips.db (checked at startup, then hourly). `are replay --source evidence` can only
+  # go back this far. null keeps everything. Minimum: 1 day with the values below.
+  retention_days: 30
+
+network:
+  # ---- FILL THESE IN BEFORE SWITCHING THE DRIVER TO nftables ----
+  # The target-side network(s). A source inside them is treated as a possibly
+  # compromised internal host (quarantine ladder); every other source is an
+  # outside attacker (block ladder). Example: [10.10.20.0/24]
+  internal_networks: []
+  # Never acted on: the router's own addresses, the gateway, the management
+  # host, DNS. Example: [10.10.10.1/32, 10.10.20.1/32, 10.10.10.5/32]
+  allowlist:
+    - 127.0.0.0/8
+  # A quarantined host can still reach, and be reached by, these addresses.
+  management_hosts: []
+
+scoring:
+  window_seconds: 600
+  severity_points: {critical: 10, high: 6, medium: 3, low: 1, info: 0}
+  repeat_cap_multiplier: 3        # a rule group scores at most 3 x its base points
+  ml:
+    floor: 0.5                    # the NIDS only raises ML alerts at p >= 0.5
+    cap: 4                        # per (source, destination) group; below one high rule hit (6)
+    repeat_weight: 0.25
+    per_ip_cap: 4                 # all ML evidence of one source together; null = per-group cap only
+    family_min_probability: 0.8   # ML counts as an independent family only at p >= this (the NIDS "high"
+                                  # line, live_ids_v2.HIGH_CONFIDENCE); below it ML adds points only. null = any
+
+policy:
+  throttle:   {score: 4,  ttl_seconds: 600}
+  reset:      {score: 8,  ttl_seconds: 600}
+  block:      {score: 12, ttl_seconds: 900, families: 2}
+  long_block: {repeat_window_seconds: 86400, ttl_seconds: 7200}
+  alert_only_techniques: [T1557.002, T1200]     # ARP spoofing, rogue host
+  alert_only_rules: [Impossible Travel]
+  quarantine_tactics: [command-and-control, exfiltration, lateral-movement, collection]
+  primary_tactic:
+    T1078: initial-access         # Valid Accounts belongs to four tactics; this is the one used
+  block_dst_min_rung: 2
+  instant_block_families: [honeypot]
+  # Stage names and order used by the NIDS correlation engine (detection/rules.py KILL_CHAIN_ORDER).
+  kill_chain_order:
+    - reconnaissance
+    - credential_access
+    - initial_access
+    - privilege_escalation
+    - persistence
+    - command_and_control
+    - lateral_movement
+    - collection
+    - exfiltration
+
+enrichment:
+  attack:
+    path: data/enterprise-attack-20.1.json
+    version: "20.1"
+    url: https://raw.githubusercontent.com/mitre/cti/ATT%26CK-v20.1/enterprise-attack/enterprise-attack.json
+    sha256: f92e8ec8b0e6f56fa310063332ba8f7524330ef51286c1b7e5315f4d2ee0b042
+  d3fend:
+    path: data/d3fend-1.6.0.json
+    version: "1.6.0"
+    url: https://d3fend.mitre.org/ontologies/d3fend/1.6.0/d3fend.json
+    sha256: e1546d432c6aa64d45b62dd9e9484b0774ae84de7ff3605ff9dd4e20278957bf
+  # D3FEND technique shown as the suggested countermeasure for each action.
+  # Startup fails if a name is not in the pinned D3FEND file.
+  d3fend_by_action:
+    throttle: Network Traffic Filtering
+    reset: Session Termination
+    block: Inbound Traffic Filtering
+    quarantine: Network Isolation
+    block_dst: Outbound Traffic Filtering
+
+nftables:
+  throttle_rate_per_second: 20
+  hook_priority: -10              # below the standard filter priority (0), so this chain runs first
+  nft_binary: /usr/sbin/nft
+
+api:
+  enabled: true                   # only starts when ARE_API_TOKEN is set in the environment
+  host: 127.0.0.1
+  port: 8088
+
+adapters:
+  nids:
+    enabled: true
+    # EDIT FOR YOUR LAB. The NIDS database (main.py: DB_PATH = "nids_users.db"). Opened read-only.
+    db_path: /opt/nids/nids_users.db
+    lookback_seconds: 600         # keep >= scoring.window_seconds
+    start_from: now               # now | beginning
+    false_positive_statuses: [false_positive]
+    ml_severity_fallback: {high: 0.85, medium: 0.65}
+
+    # rule_id -> evidence family, and whether an alert proves the source address is real.
+    # First match wins; exact names are listed before wildcards.
+    families:
+      - {pattern: TCP_SYN_SCAN,             family: net_signature, handshake: false}
+      - {pattern: TCP_NULL_SCAN,            family: net_signature, handshake: false}
+      - {pattern: TCP_FIN_SCAN,             family: net_signature, handshake: false}
+      - {pattern: TCP_XMAS_SCAN,            family: net_signature, handshake: false}
+      - {pattern: TCP_SYNFIN_SCAN,          family: net_signature, handshake: false}
+      - {pattern: TCP_CONNECT_SCAN,         family: net_signature, handshake: true}
+      - {pattern: "EXPLOIT_*",              family: net_signature, handshake: true}   # overridden per alert by details.source_verified
+      - {pattern: FLOOD_SYN,                family: net_behavior,  handshake: false}
+      - {pattern: FLOOD_UDP_AMPLIFICATION,  family: net_behavior,  handshake: false}
+      - {pattern: FLOOD_PACKET_RATE,        family: net_behavior,  handshake: false}
+      - {pattern: "SCAN_*",                 family: net_behavior,  handshake: false}
+      - {pattern: "BRUTEFORCE_*",           family: net_behavior,  handshake: false}  # NIDS fires on bare SYNs; the host sensor confirms
+      - {pattern: "BEHAVIOR_*",             family: net_behavior,  handshake: true}
+      - {pattern: "LATERAL_*",              family: net_behavior,  handshake: true}
+      - {pattern: "EXFIL_*",                family: net_behavior,  handshake: true}
+      - {pattern: "COLLECTION_*",           family: net_behavior,  handshake: true}
+      - {pattern: "CREDS_*",                family: net_behavior,  handshake: true}
+      - {pattern: "BREACH_*",               family: net_behavior,  handshake: true}
+      - {pattern: ML_FLOW_ANOMALY,          family: anomaly_ml,    handshake: false}
+      - {pattern: ANOMALY_TRAFFIC_BASELINE, family: anomaly_ml,    handshake: false}
+      - {pattern: Root Access,              family: host_sensor,   handshake: true}
+      - {pattern: SSH Login,                family: host_sensor,   handshake: true}
+      - {pattern: Host Brute Force,         family: host_sensor,   handshake: true}
+      - {pattern: Persistence,              family: host_sensor,   handshake: true}
+      - {pattern: Sensitive File Access,    family: host_sensor,   handshake: true}
+      - {pattern: Impossible Travel,        family: host_sensor,   handshake: true}
+      - {pattern: "Cloud *",                family: cloud_sensor,  handshake: true}
+      - {pattern: CORRELATED_INCIDENT,      family: correlation}   # handshake inherited from member alerts
+      # Not in the handoff's table, but in the NIDS rule catalogue:
+      - {pattern: ACTIVE_INTRUSION,         family: correlation}
+      - {pattern: MITM_ARP_SPOOF,           family: net_signature, handshake: false}  # alert-only (T1557.002)
+      - {pattern: ASSET_ROGUE_HOST,         family: net_behavior,  handshake: false}  # alert-only (T1200)
+
+    # rule_id -> ATT&CK technique, copied from the NIDS detection/rules.py
+    # (_RULES and EXTERNAL_SENSOR_STAGES). Tactics are NOT copied: the core derives
+    # them from the pinned ATT&CK data.
+    techniques:
+      TCP_NULL_SCAN: T1046
+      TCP_FIN_SCAN: T1046
+      TCP_XMAS_SCAN: T1046
+      TCP_SYNFIN_SCAN: T1046
+      TCP_SYN_SCAN: T1046
+      TCP_CONNECT_SCAN: T1046
+      SCAN_SLOW_RATE: T1046
+      SCAN_DISTRIBUTED: T1046
+      SCAN_FRAGMENTED: T1046
+      BRUTEFORCE_STANDARD_RATE: T1110
+      BRUTEFORCE_LOW_RATE: T1110
+      EXPLOIT_VSFTPD_BACKDOOR: T1190
+      EXPLOIT_VSFTPD_BACKDOOR_SHELL: T1059
+      EXPLOIT_SAMBA_USERMAP: T1190
+      EXPLOIT_DISTCC_CMDEXEC: T1190
+      EXPLOIT_UNREALIRCD_BACKDOOR: T1190
+      EXPLOIT_JAVA_RMI_DESERIALIZATION: T1190
+      BEHAVIOR_UNEXPECTED_OUTBOUND: T1571
+      BEHAVIOR_NEW_LISTENING_PORT: T1571
+      BEHAVIOR_INTERACTIVE_SHELL: T1059
+      BEHAVIOR_UNCOMMON_EGRESS_PORT: T1571
+      BEHAVIOR_C2_BEACON: T1071
+      BEHAVIOR_CLEARTEXT_ON_TLS_PORT: T1571
+      FLOOD_SYN: T1499.001
+      FLOOD_PACKET_RATE: T1498
+      FLOOD_UDP_AMPLIFICATION: T1498.002
+      BREACH_SESSION: T1078
+      LATERAL_ADMIN_SWEEP: T1021
+      EXFIL_BULK_OUTBOUND: T1041
+      COLLECTION_STAGING: T1074
+      CREDS_CLOUD_METADATA: T1552.005
+      EXFIL_DNS_TUNNEL: T1048
+      MITM_ARP_SPOOF: T1557.002
+      ASSET_ROGUE_HOST: T1200
+      Host Brute Force: T1110
+      SSH Login: T1078
+      Root Access: T1548
+      Persistence: T1136
+      Sensitive File Access: T1005
+      Cloud Port Scan: T1046
+      Cloud Recon: T1046
+      Cloud Brute Force: T1110
+      Impossible Travel: T1078
+
+    # rule_id -> kill-chain stage, copied from the NIDS detection/rules.py (Rule.stage
+    # and EXTERNAL_SENSOR_STAGES). The policy uses it to see a source advance through
+    # the chain from its own alerts. Names must match policy.kill_chain_order.
+    stages:
+      TCP_NULL_SCAN: reconnaissance
+      TCP_FIN_SCAN: reconnaissance
+      TCP_XMAS_SCAN: reconnaissance
+      TCP_SYNFIN_SCAN: reconnaissance
+      TCP_SYN_SCAN: reconnaissance
+      TCP_CONNECT_SCAN: reconnaissance
+      SCAN_SLOW_RATE: reconnaissance
+      SCAN_DISTRIBUTED: reconnaissance
+      SCAN_FRAGMENTED: reconnaissance
+      BRUTEFORCE_STANDARD_RATE: credential_access
+      BRUTEFORCE_LOW_RATE: credential_access
+      EXPLOIT_VSFTPD_BACKDOOR: initial_access
+      EXPLOIT_VSFTPD_BACKDOOR_SHELL: command_and_control
+      EXPLOIT_SAMBA_USERMAP: initial_access
+      EXPLOIT_DISTCC_CMDEXEC: initial_access
+      EXPLOIT_UNREALIRCD_BACKDOOR: initial_access
+      EXPLOIT_JAVA_RMI_DESERIALIZATION: initial_access
+      BEHAVIOR_UNEXPECTED_OUTBOUND: command_and_control
+      BEHAVIOR_NEW_LISTENING_PORT: persistence
+      BEHAVIOR_INTERACTIVE_SHELL: command_and_control
+      BEHAVIOR_UNCOMMON_EGRESS_PORT: command_and_control
+      BEHAVIOR_C2_BEACON: command_and_control
+      BEHAVIOR_CLEARTEXT_ON_TLS_PORT: command_and_control
+      BREACH_SESSION: initial_access
+      LATERAL_ADMIN_SWEEP: lateral_movement
+      EXFIL_BULK_OUTBOUND: exfiltration
+      COLLECTION_STAGING: collection
+      CREDS_CLOUD_METADATA: credential_access
+      EXFIL_DNS_TUNNEL: exfiltration
+      Host Brute Force: credential_access
+      SSH Login: initial_access
+      Root Access: privilege_escalation
+      Persistence: persistence
+      Sensitive File Access: collection
+      Cloud Port Scan: reconnaissance
+      Cloud Recon: reconnaissance
+      Cloud Brute Force: credential_access
+      Impossible Travel: initial_access
