@@ -46,7 +46,7 @@ Nothing is committed; the folder is not a git repository.
 ## Added 2026-11-21
 
 - Module walk-through given in conversation.
-- Pushed to a private GitHub repository (see "Where things are").
+- Pushed to a GitHub repository, made public the same day (see "Where things are").
 - NIDS fix (nids repo, merged into main as e79cc78): `main.py`
   now writes deferred repeat counts every second from a background thread
   (`REPEAT_FLUSH_SEC`, env `NIDS_REPEAT_FLUSH_SEC`). Before, the end of a repeat
@@ -123,7 +123,7 @@ Nothing. The module walk-through was given in conversation on 2026-11-21.
 ## Where things are
 
 - Project: `C:\Users\seifc\Downloads\Active Repsonse Engine`
-- GitHub (private): https://github.com/Mafiosohack/active-response-engine
+- GitHub (public): https://github.com/Mafiosohack/active-response-engine
 - NIDS source the adapter was written against:
   `C:\Users\seifc\Downloads\Compressed\nids` (read-only; not the older
   `Downloads\nids`)
